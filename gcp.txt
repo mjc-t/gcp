@@ -1,0 +1,177 @@
+자동화 시작 스크립트
+
+```bash
+#! /bin/bash
+set-eux
+
+MD="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
+HDR="Metadata-Flavor: Google"
+ENV_VAL=$(curl -s -H "$HDR" "MD/env" || echo "default"
+
+# 네트워크 준비 대기(최대 60초)
+for i in {1..12}; do
+	ping -c 1 metadata.google.internal && break
+	sleep 5
+done
+
+dnf install -y epel-release
+dnf makecache
+dnf install -y nginx
+
+echo "<h1>Environment: $ENV_VAL</h1>" > /usr/share/nginx/html/index.html
+
+systemctl enable nginx
+systemctl start nginx
+```
+
+---
+
+사용자 정의 메타 데이터 확인
+
+1. 다음 명령으로 bind-utils 설치
+
+```bash
+sudo dnf install bind-utils -y
+```
+
+1. metadata.google.internal에 대한 이름 해석
+
+```bash
+dig +short metadata.google.internal
+```
+
+```bash
+[myongjipro@prod ~]$ dig +short metadata.google.internal
+169.254.169.254
+```
+
+1. 모든 사용자 메다데이터 목록 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/instance/attributes/"
+```
+
+1. env 키에 대한 값 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/instance/attributes/env"
+```
+
+1. 시작 스크립트 메타데이터 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/instance/attributes/startup-script"
+```
+
+---
+
+시스템 메타데이터 확인하기
+
+1. 메타데이터 경로
+
+```bash
+# 인스턴스 메타데이터 경로
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/instance/"
+
+# 프로젝트 메타데이터 경로
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/project/"
+```
+
+1. 인스턴스 ID 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/instance/id"
+```
+
+1. 인스턴스 이름 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/instance/name"
+```
+
+1. 인스턴스가 속한 zone 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/instance/zone"
+```
+
+1. 인스턴스 머신 타입 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/instance/machine-type"
+```
+
+1. 프로젝트 ID 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/project/project-id"
+```
+
+1. 프로젝트 레벨의 SSH 키 확인
+
+```bash
+curl -s -H "Metadata-Flavor: Google" \
+"http://metadata.google.internal/computeMetadata/v1/project/attributes/ssh-keys"
+```
+
+---
+
+startup.sh
+
+```bash
+#! /bin/bash
+set -euo pipefail
+
+# 로그 남기기
+exec>>(tee -a /var/log/startup-script.log) 2>&1
+echo "[$(date -ls)] startup-script begin (Debian + Nginx)"
+
+MD="http://169.254.169.254/computeMetadata/v1"
+HDR="Metadata-Flavor: Google"
+
+# 메타데이터 서버 대기
+for i in {1..30}; do
+	if curl -fsl -H "$HDR" "$MD/"; then
+		break
+	fi
+	sleep 2
+done
+
+# env 읽기(없으면 default)
+ENV_VAL=$(curl -fs -H "$HDR" "$MD/instance/attributes/env" || echo "default")
+echo "ENV_VAL=$ENV_VAL"
+
+export DEBIAN_FRONTEND=noninteractive
+
+# apt 재시도
+for i in {1..5}; do
+	if apt-get update && apt-get install -y nginx; then
+	  echo "apt ok on try $i"
+	  break
+	fi
+	echo "apt failed try $i; retrying..."
+	sleep 5
+done
+
+mkdir -p /var/www/html
+echo "<h1>Environment: $ENV_VAL</h1>" > /var/www/html/index.html
+
+systemctl enable nginx
+systemctl restart nginx
+
+echo "[$(date -ls)] startup-script done"
+```
+
+---
+
+웹페이지
